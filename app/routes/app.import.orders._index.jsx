@@ -59,10 +59,9 @@ export default function ImportOrders() {
       const droppedFile = e.dataTransfer.files[0];
       if (droppedFile) {
         setFile(droppedFile);
-        submitFile(droppedFile, createCustomers);
       }
     },
-    [createCustomers]
+    []
   );
 
   const handleChange = useCallback(
@@ -70,11 +69,16 @@ export default function ImportOrders() {
       const selectedFile = e.target.files[0];
       if (selectedFile) {
         setFile(selectedFile);
-        submitFile(selectedFile, createCustomers);
       }
     },
-    [createCustomers]
+    []
   );
+
+  const handleImportClick = () => {
+    if (file) {
+      submitFile(file, createCustomers);
+    }
+  };
 
   const submitFile = (f, createCust) => {
     const formData = new FormData();
@@ -124,14 +128,18 @@ export default function ImportOrders() {
               onDragOver={(e) => e.preventDefault()}
               onDrop={handleDrop}
               onClick={() => fileInputRef.current?.click()}
+              style={{ cursor: 'pointer' }}
             >
               {file ? (
                 <div className="block-stack">
-                  <div className="inline-stack" style={{ justifyContent: 'center' }}>
-                    <span style={{ fontSize: '2rem' }}>📄</span>
-                    <span style={{ fontWeight: '600' }}>{file.name}</span>
+                  <div className="inline-stack" style={{ justifyContent: 'center', gap: '0.75rem' }}>
+                    <span style={{ fontSize: '2.5rem' }}>📄</span>
+                    <div style={{ textAlign: 'left' }}>
+                      <span style={{ fontWeight: '600', display: 'block', fontSize: '1.1rem' }}>{file.name}</span>
+                      <span className="text-subdued" style={{ fontSize: '0.875rem' }}>{(file.size / 1024).toFixed(1)} KB</span>
+                    </div>
                   </div>
-                  {isSubmitting && <p className="text-subdued">Uploading and parsing file...</p>}
+                  <p className="text-subdued" style={{ marginTop: '0.75rem' }}>Click or drop a new file here to change</p>
                 </div>
               ) : (
                 <div className="block-stack">
@@ -149,6 +157,31 @@ export default function ImportOrders() {
                 onChange={handleChange}
               />
             </div>
+
+            {file && (
+              <div className="inline-stack end" style={{ marginTop: '1.5rem', gap: '1rem' }}>
+                <button 
+                  className="btn btn-secondary" 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFile(null);
+                  }}
+                  disabled={isSubmitting}
+                >
+                  Clear Selection
+                </button>
+                <button 
+                  className="btn btn-primary" 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleImportClick();
+                  }}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? "Uploading & Analyzing..." : "Import Orders"}
+                </button>
+              </div>
+            )}
 
           </div>
         </div>

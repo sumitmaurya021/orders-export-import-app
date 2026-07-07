@@ -17,10 +17,11 @@ export async function processOrderRowGroup(group, admin, logger, options = {}) {
 
     switch (command) {
       case "NEW":
+      case "CREATE":
       case "MERGE":
         if (existingOrder) {
-          if (command === "NEW") {
-            await logger.warning(`Order ${identifier} pehle se exist karta hai. NEW command skip kar di gayi hai. Update karne ke liye UPDATE ya MERGE use karein.`);
+          if (command === "NEW" || command === "CREATE") {
+            await logger.warning(`Order ${identifier} pehle se exist karta hai. ${command} command skip kar di gayi hai. Update karne ke liye UPDATE ya MERGE use karein.`);
             return;
           }
           await logger.info(`Order ${identifier} mil gaya hai. MERGE command ab is order ko update karegi.`);
@@ -56,7 +57,7 @@ export async function processOrderRowGroup(group, admin, logger, options = {}) {
         break;
 
       default:
-        await logger.error(`Unknown command: ${command}. Kripya valid command use karein (NEW, UPDATE, MERGE, REPLACE, DELETE, IGNORE).`);
+        await logger.error(`Unknown command: ${command}. Kripya valid command use karein (CREATE, NEW, UPDATE, MERGE, REPLACE, DELETE, IGNORE).`);
     }
   } catch (error) {
     // Make error user-friendly
@@ -65,6 +66,18 @@ export async function processOrderRowGroup(group, admin, logger, options = {}) {
       : error.message;
     await logger.error(`Error processing order: ${friendlyError}`);
   }
+}
+
+function parseName(fullName) {
+  if (!fullName) return { firstName: "", lastName: "" };
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length === 1) {
+    return { firstName: parts[0], lastName: "" };
+  }
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(" ")
+  };
 }
 
 async function createNewOrderViaDraft(orderFields, lineItems, admin, logger, originalIdentifier, options) {
@@ -88,6 +101,47 @@ async function createNewOrderViaDraft(orderFields, lineItems, admin, logger, ori
   } else if (email) {
     input.customAttributes = [{ key: "Guest Email", value: email }];
     await logger.info(`Customer creation disabled: Order ko as guest order banaya ja raha hai. Email custom attribute me save kar diya gaya hai.`);
+  }
+
+  // Map Billing Address
+  if (orderFields["Billing Address1"] || orderFields["Billing City"] || orderFields["Billing Country"] || orderFields["Billing Name"]) {
+    const billingName = parseName(orderFields["Billing Name"]);
+    input.billingAddress = {
+      firstName: billingName.firstName,
+      lastName: billingName.lastName,
+      address1: orderFields["Billing Address1"] || "",
+      address2: orderFields["Billing Address2"] || "",
+      city: orderFields["Billing City"] || "",
+      zip: orderFields["Billing Zip"] || "",
+      province: orderFields["Billing Province"] || "",
+      country: orderFields["Billing Country"] || "",
+      phone: orderFields["Billing Phone"] || "",
+    };
+  }
+
+  // Map Shipping Address
+  if (orderFields["Shipping Address1"] || orderFields["Shipping City"] || orderFields["Shipping Country"] || orderFields["Shipping Name"]) {
+    const shippingName = parseName(orderFields["Shipping Name"]);
+    input.shippingAddress = {
+      firstName: shippingName.firstName,
+      lastName: shippingName.lastName,
+      address1: orderFields["Shipping Address1"] || "",
+      address2: orderFields["Shipping Address2"] || "",
+      company: orderFields["Shipping Company"] || "",
+      city: orderFields["Shipping City"] || "",
+      zip: orderFields["Shipping Zip"] || "",
+      province: orderFields["Shipping Province"] || "",
+      country: orderFields["Shipping Country"] || "",
+      phone: orderFields["Shipping Phone"] || "",
+    };
+  }
+
+  // Map Shipping line method & price
+  if (orderFields["Delivery method"] || orderFields["Shipping Cost"]) {
+    input.shippingLine = {
+      title: orderFields["Delivery method"] || "Shipping",
+      price: orderFields["Shipping Cost"] ? parseFloat(orderFields["Shipping Cost"]) : 0.00
+    };
   }
 
   const createDraftResponse = await rateLimiter.withRetry(async () => {
@@ -164,6 +218,12 @@ async function updateExistingOrder(existingOrder, orderFields, lineItems, admin,
   if (orderFields["Note"]) input.note = orderFields["Note"];
   if (orderFields["Tags"]) input.tags = orderFields["Tags"].split(",").map(t => t.trim());
   if (orderFields["Email"]) input.email = orderFields["Email"];
+
+  // Skip update gracefully if only ID is present (no Note, Tags, or Email fields provided for update)
+  if (Object.keys(input).length <= 1) {
+    await logger.info(`Order ${existingOrder.name} me koi allowed fields (Note, Tags, Email) update karne ke liye nahi mile. Row ko skipped/success mana gaya hai.`);
+    return;
+  }
 
   const response = await rateLimiter.withRetry(async () => {
     return await admin.graphql(

@@ -41,7 +41,7 @@ export const action = async ({ request, params }) => {
   return new Response(null, {
     status: 302,
     headers: {
-      Location: "/app",
+      Location: `/app/import/orders/summary/${jobId}`,
     },
   });
 };
@@ -54,7 +54,7 @@ export default function ImportReview() {
 
   const handleStartImport = () => {
     const formData = new FormData();
-    formData.append("totalRows", analysis.totalOrderCount);
+    formData.append("totalRows", analysis.distinctOrders);
     submit(formData, { method: "post" });
   };
 
@@ -81,10 +81,10 @@ export default function ImportReview() {
       <div className="layout">
         <div className="banner banner-info">
           <h3>File Parsed Successfully</h3>
-          <p>We found {analysis.totalOrderCount} distinct orders (based on ID/Name grouping) across {analysis.totalRows} total rows.</p>
+          <p>We found {analysis.distinctOrders} distinct orders (based on ID/Name grouping) across {analysis.totalRows} total rows.</p>
         </div>
 
-        {analysis.columns.some((c) => c.status === "Unknown") && (
+        {analysis.headers.some((c) => c.status === "Unknown") && (
           <div className="banner banner-warning">
             <h3>Unknown Columns Detected</h3>
             <p>Some columns in your file are not recognized. These will be ignored during the import process.</p>
@@ -103,7 +103,7 @@ export default function ImportReview() {
                   </tr>
                 </thead>
                 <tbody>
-                  {analysis.columns.map((col, index) => (
+                  {analysis.headers.map((col, index) => (
                     <tr key={index}>
                       <td style={{ fontWeight: 500 }}>{col.name}</td>
                       <td>{getStatusBadge(col.status)}</td>

@@ -1,4 +1,5 @@
-import { useLoaderData } from "react-router";
+import { useEffect } from "react";
+import { useLoaderData, useFetcher } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
@@ -18,15 +19,29 @@ export const loader = async ({ request, params }) => {
 };
 
 export default function ImportSummary() {
-  const { job } = useLoaderData();
+  const { job: initialJob } = useLoaderData();
+  const fetcher = useFetcher();
+
+  const job = fetcher.data?.job || initialJob;
 
   const isCompleted = job.status === "completed" || job.status === "failed";
   const successCount = job.processedRows - job.errorCount;
+  const progress = job.totalRows > 0 ? (job.processedRows / job.totalRows) * 100 : 0;
 
   let options = {};
   try {
     options = job.options ? JSON.parse(job.options) : {};
   } catch(e) {}
+
+  useEffect(() => {
+    let intervalId;
+    if (!isCompleted) {
+      intervalId = setInterval(() => {
+        fetcher.load(`/app/import/orders/summary/${job.id}`);
+      }, 3000);
+    }
+    return () => clearInterval(intervalId);
+  }, [isCompleted, job.id, fetcher]);
 
   const getStatusBadge = (status) => {
     switch (status) {
@@ -52,25 +67,56 @@ export default function ImportSummary() {
               {getStatusBadge(job.status)}
             </div>
 
-            <div className="block-stack" style={{ gap: '0.5rem', marginBottom: '1rem' }}>
-              <p className="text-subdued" style={{ margin: 0 }}>Rows Processed: {job.processedRows}</p>
-              <p className="text-success" style={{ margin: 0, fontWeight: 500 }}>Successful: {successCount}</p>
-              <p className="text-warning" style={{ margin: 0, fontWeight: 500 }}>Warnings: {job.warningCount}</p>
-              <p className="text-critical" style={{ margin: 0, fontWeight: 500 }}>Errors: {job.errorCount}</p>
+            <p className="text-subdued">File: <strong>{options.originalName || "Uploaded File"}</strong></p>
+
+            <div className="block-stack" style={{ gap: '0.5rem', marginBottom: '1rem', marginTop: '0.5rem' }}>
+              <p style={{ margin: 0 }}>Rows Processed: <strong>{job.processedRows}</strong> {job.totalRows > 0 ? `of ${job.totalRows}` : ''}</p>
+              
+              {!isCompleted && (
+                <div className="progress-container" style={{ margin: '0.5rem 0' }}>
+                  <div className="progress-bar" style={{ width: `${Math.min(progress, 100)}%` }}></div>
+                </div>
+              )}
+
+              <div className="inline-stack" style={{ gap: '1.5rem', marginTop: '0.5rem' }}>
+                <span className="text-success" style={{ fontWeight: 500 }}>✔️ Success: {successCount}</span>
+                {job.warningCount > 0 && <span className="text-warning" style={{ fontWeight: 500 }}>⚠️ Warnings: {job.warningCount}</span>}
+                {job.errorCount > 0 && <span className="text-critical" style={{ fontWeight: 500 }}>❌ Errors: {job.errorCount}</span>}
+              </div>
             </div>
 
             {!isCompleted && (
               <div className="banner banner-info">
-                <h3>Import is running</h3>
-                <p>Your orders are currently being processed in the background. Refresh this page in a few moments.</p>
+                <h3>Importing orders in background</h3>
+                <p>Your spreadsheet is being processed. The system will update you automatically when it finishes.</p>
               </div>
             )}
 
-            {isCompleted && options.annotatedFileUrl && (
-              <div className="inline-stack">
-                <a href={`/app/import/download/${job.id}`} className="btn btn-primary" target="_blank" rel="noreferrer">
-                  Download Annotated File
-                </a>
+            {job.status === "completed" && (
+              <div className="banner banner-success" style={{ background: 'rgba(16, 185, 129, 0.1)', borderColor: 'var(--success)', marginTop: '1rem' }}>
+                <h3>Import Completed Successfully!</h3>
+                <p style={{ marginBottom: job.errorCount > 0 || job.warningCount > 0 ? '1rem' : '0' }}>
+                  Shopify orders have been created/updated matching the instructions in your file.
+                </p>
+                {(job.errorCount > 0 || job.warningCount > 0) && options.annotatedFileUrl && (
+                  <div className="block-stack" style={{ gap: '0.5rem' }}>
+                    <p style={{ margin: 0 }} className="text-subdued">
+                      Some rows had errors or warnings. Download the annotated file to inspect error details for each row.
+                    </p>
+                    <div style={{ marginTop: '0.5rem' }}>
+                      <a href={`/app/import/download/${job.id}`} className="btn btn-primary" target="_blank" rel="noreferrer">
+                        Download Annotated File
+                      </a>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {job.status === "failed" && (
+              <div className="banner banner-critical" style={{ marginTop: '1rem' }}>
+                <h3>Import Failed</h3>
+                <p>There was a critical error processing your import job. Please verify your file structure and try again.</p>
               </div>
             )}
           </div>

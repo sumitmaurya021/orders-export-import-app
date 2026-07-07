@@ -276,14 +276,28 @@ class JobRunner {
           if (columns.includes("Cancel Reason")) baseRow["Cancel Reason"] = order.cancelReason || "";
           if (columns.includes("Return status")) baseRow["Return status"] = order.returnStatus || "";
           if (columns.includes("PO number")) baseRow["PO number"] = order.poNumber || "";
-          if (columns.includes("Command")) baseRow["Command"] = "MERGE"; // Default command for re-import parity
+          if (columns.includes("Command")) baseRow["Command"] = "CREATE"; // Default command for re-import
 
           const lineItems = order.lineItems?.edges || [];
 
           if (rowMode === "lineItem" && lineItems.length > 0) {
+            let isFirstLine = true;
             for (const liEdge of lineItems) {
               const li = liEdge.node;
-              const row = { ...baseRow };
+              const row = {};
+
+              // Populate order-level fields (only on first row, repeat only ID, Name, Command)
+              for (const col of columns) {
+                if (!col.startsWith("Line:")) {
+                  if (isFirstLine || col === "ID" || col === "Name" || col === "Command") {
+                    row[col] = baseRow[col] || "";
+                  } else {
+                    row[col] = "";
+                  }
+                }
+              }
+
+              // Populate line-level fields
               if (columns.includes("Line: SKU")) row["Line: SKU"] = li.sku || "";
               if (columns.includes("Line: Title")) row["Line: Title"] = li.title || "";
               if (columns.includes("Line: Quantity")) row["Line: Quantity"] = li.quantity || 0;
@@ -291,7 +305,9 @@ class JobRunner {
               if (columns.includes("Line: Vendor")) row["Line: Vendor"] = li.vendor || "";
               if (columns.includes("Line: Taxable")) row["Line: Taxable"] = li.taxable ? "Y" : "N";
               if (columns.includes("Line: Command")) row["Line: Command"] = ""; 
+              
               allRows.push(row);
+              isFirstLine = false;
             }
           } else {
             if (rowMode === "order" && lineItems.length > 0) {
