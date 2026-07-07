@@ -1,15 +1,4 @@
 import { useLoaderData } from "react-router";
-import {
-  Page,
-  Layout,
-  Card,
-  BlockStack,
-  Text,
-  Badge,
-  Button,
-  InlineStack,
-  Banner,
-} from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
@@ -39,44 +28,54 @@ export default function ImportSummary() {
     options = job.options ? JSON.parse(job.options) : {};
   } catch(e) {}
 
+  const getStatusBadge = (status) => {
+    switch (status) {
+      case "completed": return <span className="badge badge-success">Completed</span>;
+      case "failed": return <span className="badge badge-critical">Failed</span>;
+      case "processing": return <span className="badge badge-info">Processing</span>;
+      default: return <span className="badge badge-default">Pending</span>;
+    }
+  };
+
   return (
-    <Page title="Import Summary" backAction={{ content: "Dashboard", url: "/app" }}>
-      <Layout>
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <InlineStack align="space-between">
-                <Text as="h2" variant="headingMd">Job Status</Text>
-                {job.status === "completed" && <Badge tone="success">Completed</Badge>}
-                {job.status === "failed" && <Badge tone="critical">Failed</Badge>}
-                {job.status === "processing" && <Badge tone="attention">Processing</Badge>}
-                {job.status === "pending" && <Badge>Pending</Badge>}
-              </InlineStack>
+    <div className="page">
+      <div className="page-header">
+        <h1>Import Summary</h1>
+        <a href="/app" className="btn btn-secondary">Dashboard</a>
+      </div>
 
-              <BlockStack gap="200">
-                <Text tone="subdued">Rows Processed: {job.processedRows}</Text>
-                <Text tone="success">Successful: {successCount}</Text>
-                <Text tone="warning">Warnings: {job.warningCount}</Text>
-                <Text tone="critical">Errors: {job.errorCount}</Text>
-              </BlockStack>
+      <div className="layout">
+        <div className="card">
+          <div className="block-stack">
+            <div className="inline-stack space-between">
+              <h2>Job Status</h2>
+              {getStatusBadge(job.status)}
+            </div>
 
-              {!isCompleted && (
-                <Banner tone="info" title="Import is running">
-                  <p>Your orders are currently being processed in the background. Refresh this page in a few moments.</p>
-                </Banner>
-              )}
+            <div className="block-stack" style={{ gap: '0.5rem', marginBottom: '1rem' }}>
+              <p className="text-subdued" style={{ margin: 0 }}>Rows Processed: {job.processedRows}</p>
+              <p className="text-success" style={{ margin: 0, fontWeight: 500 }}>Successful: {successCount}</p>
+              <p className="text-warning" style={{ margin: 0, fontWeight: 500 }}>Warnings: {job.warningCount}</p>
+              <p className="text-critical" style={{ margin: 0, fontWeight: 500 }}>Errors: {job.errorCount}</p>
+            </div>
 
-              {isCompleted && options.annotatedFileUrl && (
-                <InlineStack align="start">
-                  <Button variant="primary" url={`/app/import/download/${job.id}`} external>
-                    Download Annotated File
-                  </Button>
-                </InlineStack>
-              )}
-            </BlockStack>
-          </Card>
-        </Layout.Section>
-      </Layout>
-    </Page>
+            {!isCompleted && (
+              <div className="banner banner-info">
+                <h3>Import is running</h3>
+                <p>Your orders are currently being processed in the background. Refresh this page in a few moments.</p>
+              </div>
+            )}
+
+            {isCompleted && options.annotatedFileUrl && (
+              <div className="inline-stack">
+                <a href={`/app/import/download/${job.id}`} className="btn btn-primary" target="_blank" rel="noreferrer">
+                  Download Annotated File
+                </a>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

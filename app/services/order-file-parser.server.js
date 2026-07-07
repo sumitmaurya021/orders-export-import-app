@@ -1,6 +1,6 @@
 import * as xlsx from "xlsx";
 import fs from "fs";
-import { ORDER_COLUMNS as EXPECTED_COLUMNS, EXPORT_ONLY_COLUMNS } from "../constants/order-columns.server";
+import { ORDER_COLUMNS as EXPECTED_COLUMNS, EXPORT_ONLY_COLUMNS } from "../constants/order-columns";
 
 /**
  * Parses the uploaded file and returns analysis of columns and order count.

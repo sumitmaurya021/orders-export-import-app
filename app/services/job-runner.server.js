@@ -203,11 +203,79 @@ class JobRunner {
           if (columns.includes("ID")) baseRow["ID"] = order.id;
           if (columns.includes("Name")) baseRow["Name"] = order.name;
           if (columns.includes("Email")) baseRow["Email"] = order.email || "";
-          if (columns.includes("Financial Status")) baseRow["Financial Status"] = order.displayFinancialStatus || "";
-          if (columns.includes("Fulfillment Status")) baseRow["Fulfillment Status"] = order.displayFulfillmentStatus || "";
+          if (columns.includes("Date")) baseRow["Date"] = order.createdAt ? new Date(order.createdAt).toLocaleString() : "";
+          if (columns.includes("Customer")) {
+            const c = order.customer;
+            baseRow["Customer"] = c ? `${c.firstName || ""} ${c.lastName || ""}`.trim() : "";
+          }
+          if (columns.includes("Channel")) {
+            let ch = order.channel?.name;
+            if (!ch && order.sourceName) {
+              if (order.sourceName === "shopify_draft_order" || order.sourceName === "draft_order") {
+                ch = "Draft Orders";
+              } else if (order.sourceName === "web") {
+                ch = "Online Store";
+              } else {
+                ch = order.sourceName;
+              }
+            }
+            baseRow["Channel"] = ch || "";
+          }
+          if (columns.includes("Total")) baseRow["Total"] = order.totalPriceSet?.presentmentMoney?.amount || "0.00";
+          if (columns.includes("Subtotal")) baseRow["Subtotal"] = order.subtotalPriceSet?.presentmentMoney?.amount || "0.00";
+          if (columns.includes("Taxes")) baseRow["Taxes"] = order.totalTaxSet?.presentmentMoney?.amount || "0.00";
+          if (columns.includes("Discounts")) baseRow["Discounts"] = order.totalDiscountsSet?.presentmentMoney?.amount || "0.00";
+          if (columns.includes("Discount Code")) baseRow["Discount Code"] = (order.discountCodes || []).join(", ");
+          if (columns.includes("Payment status")) baseRow["Payment status"] = order.displayFinancialStatus || "";
+          if (columns.includes("Fulfillment status")) baseRow["Fulfillment status"] = order.displayFulfillmentStatus || "";
           if (columns.includes("Currency")) baseRow["Currency"] = order.currencyCode || "";
+          
+          if (columns.includes("Delivery status")) {
+            const fStatus = order.fulfillments?.[0]?.displayStatus;
+            baseRow["Delivery status"] = fStatus || order.displayFulfillmentStatus || "";
+          }
+
+          if (columns.includes("Delivery method")) {
+            baseRow["Delivery method"] = order.shippingLines?.edges?.[0]?.node?.title || "";
+          }
+
+          if (columns.includes("Shipping Cost")) {
+            const sPrice = order.shippingLines?.edges?.[0]?.node?.originalPriceSet?.presentmentMoney?.amount;
+            baseRow["Shipping Cost"] = sPrice || "0.00";
+          }
+
           if (columns.includes("Tags")) baseRow["Tags"] = (order.tags || []).join(", ");
           if (columns.includes("Note")) baseRow["Note"] = order.note || "";
+          if (columns.includes("Customer: Email")) baseRow["Customer: Email"] = order.customer?.email || "";
+          
+          if (columns.includes("Destination")) {
+            const s = order.shippingAddress;
+            baseRow["Destination"] = s ? [s.address1, s.address2, s.city, s.province, s.zip, s.country].filter(Boolean).join(", ") : "";
+          }
+
+          if (columns.includes("Billing Name")) baseRow["Billing Name"] = order.billingAddress?.name || "";
+          if (columns.includes("Billing Address1")) baseRow["Billing Address1"] = order.billingAddress?.address1 || "";
+          if (columns.includes("Billing Address2")) baseRow["Billing Address2"] = order.billingAddress?.address2 || "";
+          if (columns.includes("Billing City")) baseRow["Billing City"] = order.billingAddress?.city || "";
+          if (columns.includes("Billing Zip")) baseRow["Billing Zip"] = order.billingAddress?.zip || "";
+          if (columns.includes("Billing Province")) baseRow["Billing Province"] = order.billingAddress?.province || "";
+          if (columns.includes("Billing Country")) baseRow["Billing Country"] = order.billingAddress?.country || "";
+          if (columns.includes("Billing Phone")) baseRow["Billing Phone"] = order.billingAddress?.phone || "";
+
+          if (columns.includes("Shipping Name")) baseRow["Shipping Name"] = order.shippingAddress?.name || "";
+          if (columns.includes("Shipping Address1")) baseRow["Shipping Address1"] = order.shippingAddress?.address1 || "";
+          if (columns.includes("Shipping Address2")) baseRow["Shipping Address2"] = order.shippingAddress?.address2 || "";
+          if (columns.includes("Shipping Company")) baseRow["Shipping Company"] = order.shippingAddress?.company || "";
+          if (columns.includes("Shipping City")) baseRow["Shipping City"] = order.shippingAddress?.city || "";
+          if (columns.includes("Shipping Zip")) baseRow["Shipping Zip"] = order.shippingAddress?.zip || "";
+          if (columns.includes("Shipping Province")) baseRow["Shipping Province"] = order.shippingAddress?.province || "";
+          if (columns.includes("Shipping Country")) baseRow["Shipping Country"] = order.shippingAddress?.country || "";
+          if (columns.includes("Shipping Phone")) baseRow["Shipping Phone"] = order.shippingAddress?.phone || "";
+
+          if (columns.includes("Cancelled At")) baseRow["Cancelled At"] = order.cancelledAt ? new Date(order.cancelledAt).toLocaleString() : "";
+          if (columns.includes("Cancel Reason")) baseRow["Cancel Reason"] = order.cancelReason || "";
+          if (columns.includes("Return status")) baseRow["Return status"] = order.returnStatus || "";
+          if (columns.includes("PO number")) baseRow["PO number"] = order.poNumber || "";
           if (columns.includes("Command")) baseRow["Command"] = "MERGE"; // Default command for re-import parity
 
           const lineItems = order.lineItems?.edges || [];
@@ -216,21 +284,25 @@ class JobRunner {
             for (const liEdge of lineItems) {
               const li = liEdge.node;
               const row = { ...baseRow };
-              if (columns.includes("Line Item: SKU")) row["Line Item: SKU"] = li.sku || "";
-              if (columns.includes("Line Item: Title")) row["Line Item: Title"] = li.title || "";
-              if (columns.includes("Line Item: Quantity")) row["Line Item: Quantity"] = li.quantity || 0;
-              if (columns.includes("Line Item: Price")) row["Line Item: Price"] = li.originalUnitPriceSet?.presentmentMoney?.amount || "0.00";
-              if (columns.includes("Line Item: Command")) row["Line Item: Command"] = ""; 
+              if (columns.includes("Line: SKU")) row["Line: SKU"] = li.sku || "";
+              if (columns.includes("Line: Title")) row["Line: Title"] = li.title || "";
+              if (columns.includes("Line: Quantity")) row["Line: Quantity"] = li.quantity || 0;
+              if (columns.includes("Line: Price")) row["Line: Price"] = li.originalUnitPriceSet?.presentmentMoney?.amount || "0.00";
+              if (columns.includes("Line: Vendor")) row["Line: Vendor"] = li.vendor || "";
+              if (columns.includes("Line: Taxable")) row["Line: Taxable"] = li.taxable ? "Y" : "N";
+              if (columns.includes("Line: Command")) row["Line: Command"] = ""; 
               allRows.push(row);
             }
           } else {
             if (rowMode === "order" && lineItems.length > 0) {
               const li = lineItems[0].node;
-              if (columns.includes("Line Item: SKU")) baseRow["Line Item: SKU"] = li.sku || "";
-              if (columns.includes("Line Item: Title")) baseRow["Line Item: Title"] = li.title || "";
-              if (columns.includes("Line Item: Quantity")) baseRow["Line Item: Quantity"] = li.quantity || 0;
-              if (columns.includes("Line Item: Price")) baseRow["Line Item: Price"] = li.originalUnitPriceSet?.presentmentMoney?.amount || "0.00";
-              if (columns.includes("Line Item: Command")) baseRow["Line Item: Command"] = ""; 
+              if (columns.includes("Line: SKU")) baseRow["Line: SKU"] = li.sku || "";
+              if (columns.includes("Line: Title")) baseRow["Line: Title"] = li.title || "";
+              if (columns.includes("Line: Quantity")) baseRow["Line: Quantity"] = li.quantity || 0;
+              if (columns.includes("Line: Price")) baseRow["Line: Price"] = li.originalUnitPriceSet?.presentmentMoney?.amount || "0.00";
+              if (columns.includes("Line: Vendor")) baseRow["Line: Vendor"] = li.vendor || "";
+              if (columns.includes("Line: Taxable")) baseRow["Line: Taxable"] = li.taxable ? "Y" : "N";
+              if (columns.includes("Line: Command")) baseRow["Line: Command"] = ""; 
             }
             allRows.push(baseRow);
           }
@@ -275,5 +347,10 @@ class JobRunner {
   }
 }
 
-global.__jobRunner = global.__jobRunner || new JobRunner();
+if (global.__jobRunner) {
+  if (global.__jobRunner.pollInterval) {
+    clearInterval(global.__jobRunner.pollInterval);
+  }
+}
+global.__jobRunner = new JobRunner();
 export const jobRunner = global.__jobRunner;

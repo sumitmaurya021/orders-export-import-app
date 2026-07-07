@@ -1,20 +1,5 @@
-import { useState, useCallback } from "react";
-import { useSubmit, useNavigation } from "react-router";
-import {
-  Page,
-  Layout,
-  Card,
-  DropZone,
-  Text,
-  BlockStack,
-  Thumbnail,
-  Banner,
-} from "@shopify/polaris";
-import { NoteIcon } from "@shopify/polaris-icons";
-import {
-  unstable_parseMultipartFormData,
-  unstable_createFileUploadHandler,
-} from "@shopify/remix-server-runtime";
+import { useState, useCallback, useRef, useEffect } from "react";
+import { useSubmit, useNavigation, useNavigate, useActionData } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import fs from "fs";
@@ -22,42 +7,34 @@ import path from "path";
 
 export const action = async ({ request }) => {
   const { session } = await authenticate.admin(request);
-
-  // Setup file upload to local tmp directory
-  const uploadHandler = unstable_createFileUploadHandler({
-    directory: path.join(process.cwd(), "tmp"),
-    maxPartSize: 50_000_000, // 50MB
-    file: ({ filename }) => `${Date.now()}-${filename}`,
-  });
-
-  const formData = await unstable_parseMultipartFormData(request, uploadHandler);
+  const formData = await request.formData();
   const file = formData.get("file");
 
   if (!file || typeof file === "string") {
-    return { error: "No valid file uploaded." };
+    return { error: "No file uploaded" };
   }
 
-  const filePath = file.filepath;
+  const uploadDir = path.join(process.cwd(), "tmp");
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+
+  const filePath = path.join(uploadDir, `${Date.now()}-${file.name}`);
+  const buffer = Buffer.from(await file.arrayBuffer());
+  fs.writeFileSync(filePath, buffer);
 
   const createCustomers = formData.get("createCustomers") === "true";
 
-  // Create an ImportJob in 'review' status
   const job = await prisma.importJob.create({
     data: {
       shopId: session.shop,
-      status: "review", // A custom status before 'pending' for review phase
+      status: "review",
       fileUrl: filePath,
       options: JSON.stringify({ originalName: file.name, createCustomers }),
     },
   });
 
-  // Redirect to review page
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: `/app/import/orders/review/${job.id}`,
-    },
-  });
+  return { jobId: job.id };
 };
 
 export default function ImportOrders() {
@@ -65,82 +42,117 @@ export default function ImportOrders() {
   const [createCustomers, setCreateCustomers] = useState(false);
   const submit = useSubmit();
   const navigation = useNavigation();
+  const navigate = useNavigate();
+  const actionData = useActionData();
   const isSubmitting = navigation.state === "submitting";
+  const fileInputRef = useRef(null);
 
-  const handleDropZoneDrop = useCallback(
-    (_dropFiles, acceptedFiles, _rejectedFiles) => {
-      const selectedFile = acceptedFiles[0];
-      setFile(selectedFile);
+  useEffect(() => {
+    if (actionData?.jobId) {
+      navigate(`/app/import/orders/review/${actionData.jobId}`);
+    }
+  }, [actionData, navigate]);
 
-      if (selectedFile) {
-        const formData = new FormData();
-        formData.append("file", selectedFile);
-        formData.append("createCustomers", createCustomers ? "true" : "false");
-        submit(formData, { method: "post", encType: "multipart/form-data" });
+  const handleDrop = useCallback(
+    (e) => {
+      e.preventDefault();
+      const droppedFile = e.dataTransfer.files[0];
+      if (droppedFile) {
+        setFile(droppedFile);
+        submitFile(droppedFile, createCustomers);
       }
     },
-    [submit, createCustomers]
+    [createCustomers]
   );
 
-  const fileUpload = !file && <DropZone.FileUpload actionHint="Accepts .xlsx or .csv" />;
-  const uploadedFile = file && (
-    <BlockStack align="center" inlineAlign="center">
-      <Thumbnail
-        size="small"
-        alt={file.name}
-        source={NoteIcon}
-      />
-      <div>
-        {file.name} <Text variant="bodySm" as="p">{Math.round(file.size / 1024)} kb</Text>
-      </div>
-    </BlockStack>
+  const handleChange = useCallback(
+    (e) => {
+      const selectedFile = e.target.files[0];
+      if (selectedFile) {
+        setFile(selectedFile);
+        submitFile(selectedFile, createCustomers);
+      }
+    },
+    [createCustomers]
   );
+
+  const submitFile = (f, createCust) => {
+    const formData = new FormData();
+    formData.append("file", f);
+    formData.append("createCustomers", createCust ? "true" : "false");
+    submit(formData, { method: "post", encType: "multipart/form-data" });
+  };
 
   return (
-    <Page
-      title="Upload Orders"
-      backAction={{ content: "Dashboard", url: "/app" }}
-    >
-      <Layout>
-        <Layout.Section>
-          <BlockStack gap="400">
-            <Banner tone="critical" title="CRITICAL: Disable Auto-Fulfillment">
-              <p>Before importing orders, please go to your <b>Shopify Admin &rarr; Settings &rarr; Checkout &rarr; Order processing</b> and ensure <strong>"Automatically fulfill the order's line items"</strong> is <b>OFF</b>. Otherwise, importing historical orders will trigger real shipping confirmation emails to your customers!</p>
-            </Banner>
+    <div className="page">
+      <div className="page-header">
+        <h1>Import Orders</h1>
+        <a href="/app" className="btn btn-secondary">Back to Dashboard</a>
+      </div>
 
-            <Banner tone="info" title="Upload Requirements">
-              <p>Please upload a single Excel (.xlsx) or CSV (.csv) file containing only Orders. Make sure it contains columns like ID, Name, Command, etc.</p>
-              <div style={{ marginTop: '10px' }}>
-                <Checkbox
-                  label="Create missing customers (If email is provided but no customer exists in Shopify)"
-                  checked={createCustomers}
-                  onChange={setCreateCustomers}
-                />
-              </div>
-            </Banner>
+      <div className="layout">
+        <div className="banner banner-warning">
+          <h3>Critical Fulfillment Rules</h3>
+          <p>
+            Shopify API strict validation: You CANNOT modify line items or prices on an existing order if it has been partially or fully fulfilled. 
+            Modifying fulfilled orders will result in API errors. Use the "UPDATE" command to safely update only Tags, Notes, or Custom Attributes.
+          </p>
+        </div>
 
-            <Card>
-              <BlockStack gap="400">
-                <Text as="h2" variant="headingMd">
-                  Upload File
-                </Text>
-                <div style={{ height: 200 }}>
-                  <DropZone
-                    accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    type="file"
-                    onDrop={handleDropZoneDrop}
-                    allowMultiple={false}
-                    disabled={isSubmitting}
-                  >
-                    {uploadedFile}
-                    {fileUpload}
-                  </DropZone>
+        <div className="banner banner-info">
+          <h3>Upload Requirements</h3>
+          <p>Please upload a single Excel (.xlsx) or CSV (.csv) file containing only Orders. Make sure it contains columns like ID, Name, Command, etc.</p>
+          <div style={{ marginTop: '10px' }} className="checkbox-wrapper">
+            <input 
+              type="checkbox" 
+              id="createCustomers" 
+              checked={createCustomers}
+              onChange={(e) => setCreateCustomers(e.target.checked)}
+            />
+            <label htmlFor="createCustomers" style={{ cursor: 'pointer' }}>
+              Create missing customers (If email is provided but no customer exists in Shopify)
+            </label>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="block-stack">
+            <h2>File Upload</h2>
+            
+            <div 
+              className="dropzone"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {file ? (
+                <div className="block-stack">
+                  <div className="inline-stack" style={{ justifyContent: 'center' }}>
+                    <span style={{ fontSize: '2rem' }}>📄</span>
+                    <span style={{ fontWeight: '600' }}>{file.name}</span>
+                  </div>
+                  {isSubmitting && <p className="text-subdued">Uploading and parsing file...</p>}
                 </div>
-              </BlockStack>
-            </Card>
-          </BlockStack>
-        </Layout.Section>
-      </Layout>
-    </Page>
+              ) : (
+                <div className="block-stack">
+                  <span style={{ fontSize: '3rem', display: 'block', marginBottom: '1rem' }}>📥</span>
+                  <h3>Click or drop file to upload</h3>
+                  <p>Accepts .xlsx or .csv</p>
+                </div>
+              )}
+              
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                style={{ display: 'none' }} 
+                accept=".xlsx,.csv"
+                onChange={handleChange}
+              />
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

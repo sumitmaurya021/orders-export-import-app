@@ -12,22 +12,151 @@ export function buildExportQuery(columns) {
 
   // Dynamically add fields based on selected columns to avoid over-fetching
   if (columns.includes("Email")) orderFields += `\n    email`;
-  if (columns.includes("Financial Status")) orderFields += `\n    displayFinancialStatus`;
-  if (columns.includes("Fulfillment Status")) orderFields += `\n    displayFulfillmentStatus`;
+  if (columns.includes("Payment status")) orderFields += `\n    displayFinancialStatus`;
+  if (columns.includes("Fulfillment status") || columns.includes("Delivery status")) orderFields += `\n    displayFulfillmentStatus`;
   if (columns.includes("Currency")) orderFields += `\n    currencyCode`;
   if (columns.includes("Tags")) orderFields += `\n    tags`;
   if (columns.includes("Note")) orderFields += `\n    note`;
+  
+  if (columns.includes("Customer") || columns.includes("Customer: Email")) {
+    orderFields += `
+      customer {
+        firstName
+        lastName
+        email
+      }
+    `;
+  }
+
+  if (columns.includes("Channel")) {
+    orderFields += `
+      channel {
+        name
+      }
+      sourceName
+    `;
+  }
+
+  if (columns.includes("Total")) {
+    orderFields += `
+      totalPriceSet {
+        presentmentMoney {
+          amount
+        }
+      }
+    `;
+  }
+
+  if (columns.includes("Subtotal")) {
+    orderFields += `
+      subtotalPriceSet {
+        presentmentMoney {
+          amount
+        }
+      }
+    `;
+  }
+
+  if (columns.includes("Taxes")) {
+    orderFields += `
+      totalTaxSet {
+        presentmentMoney {
+          amount
+        }
+      }
+    `;
+  }
+
+  if (columns.includes("Discounts")) {
+    orderFields += `
+      totalDiscountsSet {
+        presentmentMoney {
+          amount
+        }
+      }
+    `;
+  }
+
+  if (columns.includes("Discount Code")) {
+    orderFields += `\n    discountCodes`;
+  }
+
+  const hasBillingAddress = columns.some(c => c.startsWith("Billing "));
+  if (hasBillingAddress) {
+    orderFields += `
+      billingAddress {
+        name
+        address1
+        address2
+        city
+        province
+        zip
+        country
+        phone
+      }
+    `;
+  }
+
+  const hasShippingAddress = columns.includes("Destination") || columns.some(c => c.startsWith("Shipping "));
+  if (hasShippingAddress) {
+    orderFields += `
+      shippingAddress {
+        name
+        address1
+        address2
+        company
+        city
+        province
+        zip
+        country
+        phone
+      }
+    `;
+  }
+
+  if (columns.includes("Delivery status")) {
+    orderFields += `
+      fulfillments {
+        displayStatus
+      }
+    `;
+  }
+
+  const hasShippingLines = columns.includes("Delivery method") || columns.includes("Shipping Cost");
+  if (hasShippingLines) {
+    orderFields += `
+      shippingLines(first: 5) {
+        edges {
+          node {
+            title
+            originalPriceSet {
+              presentmentMoney {
+                amount
+              }
+            }
+          }
+        }
+      }
+    `;
+  }
+
+  if (columns.includes("Cancelled At")) orderFields += `\n    cancelledAt`;
+  if (columns.includes("Cancel Reason")) orderFields += `\n    cancelReason`;
+  if (columns.includes("Return status")) orderFields += `\n    returnStatus`;
+  if (columns.includes("PO number")) orderFields += `\n    poNumber`;
 
   // Check if we need line items
-  const needsLineItems = columns.some(c => c.startsWith("Line Item:") || c.startsWith("SKU") || c.startsWith("Title") || c.startsWith("Quantity") || c.startsWith("Price"));
+  const needsLineItems = columns.some(c => c.startsWith("Line:"));
 
   let lineItemsQuery = "";
   if (needsLineItems) {
     let lineItemFields = `id`;
-    if (columns.includes("Line Item: SKU")) lineItemFields += `\n        sku`;
-    if (columns.includes("Line Item: Title")) lineItemFields += `\n        title`;
-    if (columns.includes("Line Item: Quantity")) lineItemFields += `\n        quantity`;
-    if (columns.includes("Line Item: Price")) lineItemFields += `\n        originalUnitPriceSet { presentmentMoney { amount } }`;
+    if (columns.includes("Line: SKU")) lineItemFields += `\n        sku`;
+    if (columns.includes("Line: Title")) lineItemFields += `\n        title`;
+    if (columns.includes("Line: Quantity")) lineItemFields += `\n        quantity`;
+    if (columns.includes("Line: Price")) lineItemFields += `\n        originalUnitPriceSet { presentmentMoney { amount } }`;
+    if (columns.includes("Line: Vendor")) lineItemFields += `\n        vendor`;
+    if (columns.includes("Line: Taxable")) lineItemFields += `\n        taxable`;
 
     lineItemsQuery = `
       lineItems(first: 100) {

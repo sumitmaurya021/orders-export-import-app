@@ -1,22 +1,24 @@
-import { useState } from "react";
-import { useSubmit, useActionData, useNavigation } from "react-router";
-import {
-  Page,
-  Layout,
-  Card,
-  BlockStack,
-  Text,
-  ChoiceList,
-  TextField,
-  Button,
-  InlineStack,
-  Checkbox,
-  Banner,
-} from "@shopify/polaris";
+import { useState, useEffect } from "react";
+import { useSubmit, useActionData, useNavigation, useLoaderData, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import { buildSearchQuery } from "../services/order-export-query.server";
-import { ORDER_COLUMNS as ALL_COLUMNS } from "../constants/order-columns.server";
+import { ORDER_COLUMNS as ALL_COLUMNS } from "../constants/order-columns";
+
+export const loader = async ({ request }) => {
+  const { admin } = await authenticate.admin(request);
+  const countResponse = await admin.graphql(
+    `#graphql
+    query getOrdersCount {
+      ordersCount {
+        count
+      }
+    }`
+  );
+  const countData = await countResponse.json();
+  const count = countData.data?.ordersCount?.count || 0;
+  return { totalCount: count };
+};
+
 
 export const action = async ({ request }) => {
   const { session, admin } = await authenticate.admin(request);
@@ -28,25 +30,16 @@ export const action = async ({ request }) => {
   
   const selectedColumns = formData.getAll("columns");
   
-  const filters = {
-    financialStatus: formData.get("financialStatus") || "",
-    fulfillmentStatus: formData.get("fulfillmentStatus") || "",
-    tags: formData.get("tags") || "",
-    dateMin: formData.get("dateMin") || "",
-    dateMax: formData.get("dateMax") || "",
-  };
-
-  const queryStr = buildSearchQuery(filters);
+  const queryStr = ""; // No filters anymore
 
   // Check count
   const countResponse = await admin.graphql(
     `#graphql
-    query getOrdersCount($query: String) {
-      ordersCount(query: $query) {
+    query getOrdersCount {
+      ordersCount {
         count
       }
-    }`,
-    { variables: { query: queryStr } }
+    }`
   );
 
   const countData = await countResponse.json();
@@ -71,41 +64,43 @@ export const action = async ({ request }) => {
     },
   });
 
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: `/app/export/orders/progress/${job.id}`,
-    },
-  });
+  return { jobId: job.id };
 };
 
 export default function ExportOrders() {
+  const { totalCount } = useLoaderData();
   const submit = useSubmit();
   const actionData = useActionData();
   const navigation = useNavigation();
+  const navigate = useNavigate();
   const isSubmitting = navigation.state === "submitting";
 
-  const [format, setFormat] = useState(["xlsx"]);
-  const [rowMode, setRowMode] = useState(["lineItem"]);
-  const [columns, setColumns] = useState(ALL_COLUMNS);
+  useEffect(() => {
+    if (actionData?.jobId) {
+      navigate(`/app/export/orders/progress/${actionData.jobId}`);
+    }
+  }, [actionData, navigate]);
+
+  const [format, setFormat] = useState("xlsx");
+  const [rowMode, setRowMode] = useState("lineItem");
   
-  const [financialStatus, setFinancialStatus] = useState("");
-  const [fulfillmentStatus, setFulfillmentStatus] = useState("");
-  const [tags, setTags] = useState("");
-  const [dateMin, setDateMin] = useState("");
-  const [dateMax, setDateMax] = useState("");
+  // Custom multi-select state for columns
+  const [columns, setColumns] = useState(ALL_COLUMNS);
   
   const [confirmedLargeExport, setConfirmedLargeExport] = useState(false);
 
+  const toggleColumn = (col) => {
+    if (columns.includes(col)) {
+      setColumns(columns.filter(c => c !== col));
+    } else {
+      setColumns([...columns, col]);
+    }
+  };
+
   const handleExport = () => {
     const formData = new FormData();
-    formData.append("format", format[0]);
-    formData.append("rowMode", rowMode[0]);
-    formData.append("financialStatus", financialStatus);
-    formData.append("fulfillmentStatus", fulfillmentStatus);
-    formData.append("tags", tags);
-    formData.append("dateMin", dateMin);
-    formData.append("dateMax", dateMax);
+    formData.append("format", format);
+    formData.append("rowMode", rowMode);
     columns.forEach(c => formData.append("columns", c));
 
     if (confirmedLargeExport) {
@@ -118,98 +113,93 @@ export default function ExportOrders() {
   const isLargeExportError = actionData?.error === "large_export";
 
   return (
-    <Page title="Export Orders" backAction={{ content: "Dashboard", url: "/app" }}>
-      <Layout>
+    <div className="page">
+      <div className="page-header">
+        <h1>Export Orders</h1>
+        <a href="/app" className="btn btn-secondary">Dashboard</a>
+      </div>
+
+      <div className="layout">
+        <div className="banner banner-info">
+          <h3>Total Orders Available: {totalCount.toLocaleString()}</h3>
+          <p>You are about to export all {totalCount.toLocaleString()} orders from your store.</p>
+        </div>
         {isLargeExportError && (
-          <Layout.Section>
-            <Banner tone="warning" title="Large Export Detected">
-              <p>Your filters match {actionData?.count?.toLocaleString()} orders. This is a very large export and will take a long time.</p>
-              <div style={{ marginTop: '10px' }}>
-                <Checkbox
-                  label="I confirm I want to export more than 200,000 orders."
-                  checked={confirmedLargeExport}
-                  onChange={setConfirmedLargeExport}
-                />
-              </div>
-            </Banner>
-          </Layout.Section>
+          <div className="banner banner-warning">
+            <h3>Large Export Detected</h3>
+            <p>Your filters match {actionData?.count?.toLocaleString()} orders. This is a very large export and will take a long time.</p>
+            <div style={{ marginTop: '10px' }} className="checkbox-wrapper">
+              <input 
+                type="checkbox" 
+                id="confirmLarge" 
+                checked={confirmedLargeExport}
+                onChange={(e) => setConfirmedLargeExport(e.target.checked)}
+              />
+              <label htmlFor="confirmLarge" style={{cursor:'pointer', color:'inherit'}}>I confirm I want to export more than 200,000 orders.</label>
+            </div>
+          </div>
         )}
 
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">Export Settings</Text>
+        <div className="card">
+          <div className="block-stack">
+            <h2>Export Settings</h2>
+            
+            <div className="inline-stack">
+              <div className="form-group" style={{ flex: 1, minWidth: '200px' }}>
+                <label>Format</label>
+                <select value={format} onChange={(e) => setFormat(e.target.value)}>
+                  <option value="xlsx">Excel (.xlsx)</option>
+                  <option value="csv">CSV (.csv)</option>
+                </select>
+              </div>
               
-              <InlineStack gap="400">
-                <ChoiceList
-                  title="Format"
-                  choices={[
-                    { label: "Excel (.xlsx)", value: "xlsx" },
-                    { label: "CSV (.csv)", value: "csv" },
-                  ]}
-                  selected={format}
-                  onChange={setFormat}
-                />
-                
-                <ChoiceList
-                  title="Row Layout"
-                  choices={[
-                    { label: "One row per Order", value: "order", helpText: "Line items will be ignored/merged" },
-                    { label: "One row per Line Item", value: "lineItem", helpText: "Order fields repeat for each item" },
-                  ]}
-                  selected={rowMode}
-                  onChange={setRowMode}
-                />
-              </InlineStack>
+              <div className="form-group" style={{ flex: 1, minWidth: '200px' }}>
+                <label>Row Layout</label>
+                <select value={rowMode} onChange={(e) => setRowMode(e.target.value)}>
+                  <option value="order">One row per Order (Ignore line items)</option>
+                  <option value="lineItem">One row per Line Item (Order fields repeat)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
 
-            </BlockStack>
-          </Card>
-        </Layout.Section>
+        <div className="card">
+          <div className="block-stack">
+            <h2>Columns</h2>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
+              {ALL_COLUMNS.map((col) => (
+                <div key={col} className="checkbox-wrapper">
+                  <input 
+                    type="checkbox" 
+                    id={`col-${col}`} 
+                    checked={columns.includes(col)}
+                    onChange={() => toggleColumn(col)}
+                  />
+                  <label htmlFor={`col-${col}`}>{col}</label>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
 
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">Columns</Text>
-              <ChoiceList
-                allowMultiple
-                title="Select columns to export"
-                titleHidden
-                choices={ALL_COLUMNS.map(c => ({ label: c, value: c }))}
-                selected={columns}
-                onChange={setColumns}
-              />
-            </BlockStack>
-          </Card>
-        </Layout.Section>
+        <div className="card">
+          <div className="block-stack">
+            <h2>Start Export</h2>
+            <p className="text-subdued">Click the button below to start the background export process.</p>
 
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">Filters</Text>
-              <InlineStack gap="400" wrap={false}>
-                <TextField label="Financial Status" value={financialStatus} onChange={setFinancialStatus} placeholder="e.g. paid, pending" autoComplete="off" />
-                <TextField label="Fulfillment Status" value={fulfillmentStatus} onChange={setFulfillmentStatus} placeholder="e.g. fulfilled, unfulfilled" autoComplete="off" />
-                <TextField label="Tags" value={tags} onChange={setTags} placeholder="e.g. wholesale" autoComplete="off" />
-              </InlineStack>
-              <InlineStack gap="400" wrap={false}>
-                <TextField type="date" label="Date Min (Created At)" value={dateMin} onChange={setDateMin} autoComplete="off" />
-                <TextField type="date" label="Date Max (Created At)" value={dateMax} onChange={setDateMax} autoComplete="off" />
-              </InlineStack>
-
-              <InlineStack align="end">
-                <Button 
-                  variant="primary" 
-                  onClick={handleExport} 
-                  loading={isSubmitting}
-                  disabled={isLargeExportError && !confirmedLargeExport}
-                >
-                  Start Export
-                </Button>
-              </InlineStack>
-            </BlockStack>
-          </Card>
-        </Layout.Section>
-      </Layout>
-    </Page>
+            <div className="inline-stack end" style={{ marginTop: '1rem' }}>
+              <button 
+                className="btn btn-primary" 
+                onClick={handleExport} 
+                disabled={(isLargeExportError && !confirmedLargeExport) || isSubmitting}
+              >
+                {isSubmitting ? 'Starting...' : 'Start Export'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

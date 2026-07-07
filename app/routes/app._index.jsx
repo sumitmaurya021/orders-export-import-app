@@ -1,43 +1,27 @@
 import { useEffect } from "react";
-import { useFetcher, useLoaderData } from "react-router";
-import {
-  Page,
-  Layout,
-  Text,
-  Card,
-  Button,
-  BlockStack,
-  Box,
-  List,
-  Link,
-  InlineStack,
-  Badge,
-  ProgressBar,
-  EmptyState,
-} from "@shopify/polaris";
+import { useFetcher, useNavigate, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
-
-  // Fetch recent jobs
-  const importJobs = await prisma.importJob.findMany({
+  
+  const imports = await prisma.importJob.findMany({
     where: { shopId: session.shop },
     orderBy: { createdAt: "desc" },
-    take: 5,
+    take: 5
   });
 
-  const exportJobs = await prisma.exportJob.findMany({
+  const exports = await prisma.exportJob.findMany({
     where: { shopId: session.shop },
     orderBy: { createdAt: "desc" },
-    take: 5,
+    take: 5
   });
 
-  // Combine and sort by createdAt desc
-  const allJobs = [...importJobs.map(j => ({ ...j, type: "Import" })), ...exportJobs.map(j => ({ ...j, type: "Export" }))]
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-    .slice(0, 10);
+  const allJobs = [
+    ...imports.map(j => ({ ...j, type: "Import" })),
+    ...exports.map(j => ({ ...j, type: "Export" }))
+  ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 5);
 
   return { jobs: allJobs };
 };
@@ -48,150 +32,145 @@ export const action = async ({ request }) => {
   const actionType = formData.get("actionType");
 
   if (actionType === "import") {
-    const job = await prisma.importJob.create({
-      data: {
-        shopId: session.shop,
-        fileUrl: "dummy-url", // Placeholder for actual file upload
-        status: "pending",
-        options: JSON.stringify({}),
-      },
+    return new Response(null, {
+      status: 302,
+      headers: { Location: "/app/import/orders" },
     });
-    return { success: true, job };
   }
-
+  
   if (actionType === "export") {
-    const job = await prisma.exportJob.create({
-      data: {
-        shopId: session.shop,
-        status: "pending",
-        format: "xlsx",
-        filters: JSON.stringify({}),
-      },
+    return new Response(null, {
+      status: 302,
+      headers: { Location: "/app/export/orders" },
     });
-    return { success: true, job };
   }
 
-  return { error: "Unknown action" };
+  return null;
 };
 
 export default function Index() {
-  const { jobs } = useLoaderData();
+  const { jobs: initialJobs } = useLoaderData();
   const fetcher = useFetcher();
-  const isPolling = jobs.some((j) => j.status === "pending" || j.status === "processing");
+  const navigate = useNavigate();
+
+  const jobs = fetcher.data?.jobs || initialJobs || [];
+
+  const isPolling = jobs.some(j => j.status === "processing" || j.status === "pending"); 
 
   useEffect(() => {
     let intervalId;
     if (isPolling) {
       intervalId = setInterval(() => {
         fetcher.load("/app");
-      }, 2000); // Poll every 2 seconds if jobs are active
+      }, 3000);
     }
     return () => clearInterval(intervalId);
   }, [isPolling, fetcher]);
 
-  const displayedJobs = fetcher.data?.jobs || jobs;
-  const isLoading = fetcher.state !== "idle";
-
-  const handleCreateJob = (type) => {
-    fetcher.submit({ actionType: type }, { method: "POST" });
-  };
-
   const getStatusBadge = (status) => {
     switch (status) {
-      case "completed":
-        return <Badge tone="success">Completed</Badge>;
-      case "processing":
-        return <Badge tone="attention">Processing</Badge>;
-      case "failed":
-        return <Badge tone="critical">Failed</Badge>;
-      case "pending":
-      default:
-        return <Badge>Pending</Badge>;
+      case "completed": return <span className="badge badge-success">Completed</span>;
+      case "processing": return <span className="badge badge-info">Processing</span>;
+      case "failed": return <span className="badge badge-critical">Failed</span>;
+      default: return <span className="badge badge-default">{status}</span>;
     }
   };
 
+  const handleCreateJob = (type) => {
+    const fd = new FormData();
+    fd.append("actionType", type);
+    fetcher.submit(fd, { method: "post" });
+  };
+
+  const isLoading = fetcher.state !== "idle";
+
   return (
-    <Page title="Orders Sync Dashboard">
-      <Layout>
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">
-                Import & Export Orders
-              </Text>
-              <Text as="p" variant="bodyMd">
-                Manage your orders via spreadsheets (XLSX/CSV). Create, update, replace, merge, or delete orders using our bulk import tool, or export your existing orders.
-              </Text>
-              <InlineStack gap="300">
-                <Button onClick={() => handleCreateJob("import")} loading={isLoading && fetcher.formData?.get("actionType") === "import"} variant="primary">
-                  Import Orders
-                </Button>
-                <Button onClick={() => handleCreateJob("export")} loading={isLoading && fetcher.formData?.get("actionType") === "export"}>
-                  Export Orders
-                </Button>
-              </InlineStack>
-            </BlockStack>
-          </Card>
-        </Layout.Section>
+    <div className="page">
+      <div className="page-header">
+        <h1>Orders Sync</h1>
+      </div>
+      
+      <div className="layout">
+        <div className="card">
+          <div className="block-stack">
+            <h2>Import & Export Orders</h2>
+            <p>Manage your orders via spreadsheets (XLSX/CSV). Create, update, replace, merge, or delete orders using our bulk import tool, or export your existing orders.</p>
+            <div className="inline-stack">
+              <button 
+                className="btn btn-primary"
+                onClick={() => navigate("/app/import/orders")} 
+              >
+                Import Orders
+              </button>
+              <button 
+                className="btn btn-secondary"
+                onClick={() => navigate("/app/export/orders")} 
+              >
+                Export Orders
+              </button>
+            </div>
+          </div>
+        </div>
 
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">
-                Recent Jobs
-              </Text>
+        <div className="card">
+          <div className="block-stack">
+            <h2>Recent Jobs</h2>
+            
+            {jobs.length === 0 ? (
+              <div className="empty-state">
+                <p>Run your first import or export to see it here.</p>
+              </div>
+            ) : (
+              <div className="block-stack">
+                {jobs.map((job) => {
+                  const isImport = job.type === "Import";
+                  const progress = isImport
+                    ? job.totalRows > 0 ? (job.processedRows / job.totalRows) * 100 : 0
+                    : job.itemCount > 0 ? 100 : 0;
 
-              {displayedJobs.length === 0 ? (
-                <EmptyState heading="No jobs yet" image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png">
-                  <p>Run your first import or export to see it here.</p>
-                </EmptyState>
-              ) : (
-                <BlockStack gap="300">
-                  {displayedJobs.map((job) => {
-                    const isImport = job.type === "Import";
-                    const progress = isImport
-                      ? job.totalRows > 0
-                        ? (job.processedRows / job.totalRows) * 100
-                        : 0
-                      : job.itemCount > 0
-                        ? 100 // Export doesn't have a total upfront usually, just item count
-                        : 0;
-
-                    return (
-                      <Box key={job.id} paddingBlockEnd="200" borderBlockEndWidth="025" borderColor="border">
-                        <InlineStack align="space-between" blockAlign="center">
-                          <BlockStack gap="100">
-                            <Text as="h3" variant="headingSm">
-                              {job.type} Job
-                            </Text>
-                            <Text as="p" variant="bodySm" tone="subdued">
-                              {new Date(job.createdAt).toLocaleString()}
-                            </Text>
-                          </BlockStack>
-                          <InlineStack gap="300" blockAlign="center">
-                            {job.status === "processing" && (
-                              <Box minWidth="100px">
-                                <ProgressBar progress={progress} size="small" />
-                              </Box>
-                            )}
-                            {getStatusBadge(job.status)}
-                            <Button 
-                              url={isImport ? `/app/import/orders/summary/${job.id}` : `/app/export/orders/progress/${job.id}`} 
-                              variant="plain"
+                  return (
+                    <div key={job.id} className="box">
+                      <div className="inline-stack space-between">
+                        <div>
+                          <h3>{job.type} Job</h3>
+                          <p style={{marginBottom: 0, fontSize: '0.875rem'}}>{new Date(job.createdAt).toLocaleString()}</p>
+                        </div>
+                        <div className="inline-stack">
+                          {job.status === "processing" && (
+                            <div style={{width: '100px'}}>
+                              <div className="progress-container">
+                                <div className="progress-bar" style={{width: `${progress}%`}}></div>
+                              </div>
+                            </div>
+                          )}
+                          {getStatusBadge(job.status)}
+                          <button 
+                            className="btn btn-plain"
+                            onClick={() => navigate(isImport ? `/app/import/orders/summary/${job.id}` : `/app/export/orders/progress/${job.id}`)}
+                          >
+                            View Details
+                          </button>
+                          {job.status === "completed" && (isImport ? (job.options && JSON.parse(job.options).annotatedFileUrl) : job.fileUrl) && (
+                            <a 
+                              href={isImport ? `/app/import/download/${job.id}` : `/app/export/download/${job.id}`}
+                              className="btn btn-plain"
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{ color: '#10b981', textDecoration: 'none' }}
                             >
-                              View Details
-                            </Button>
-                          </InlineStack>
-                        </InlineStack>
-                      </Box>
-                    );
-                  })}
-                </BlockStack>
-              )}
-            </BlockStack>
-          </Card>
-        </Layout.Section>
-      </Layout>
-    </Page>
+                              Download File
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
