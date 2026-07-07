@@ -1,331 +1,197 @@
 import { useEffect } from "react";
-import { useFetcher } from "react-router";
-import { useAppBridge } from "@shopify/app-bridge-react";
-import { boundary } from "@shopify/shopify-app-react-router/server";
+import { useFetcher, useLoaderData } from "react-router";
+import {
+  Page,
+  Layout,
+  Text,
+  Card,
+  Button,
+  BlockStack,
+  Box,
+  List,
+  Link,
+  InlineStack,
+  Badge,
+  ProgressBar,
+  EmptyState,
+} from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
 
-  return null;
+  // Fetch recent jobs
+  const importJobs = await prisma.importJob.findMany({
+    where: { shopId: session.shop },
+    orderBy: { createdAt: "desc" },
+    take: 5,
+  });
+
+  const exportJobs = await prisma.exportJob.findMany({
+    where: { shopId: session.shop },
+    orderBy: { createdAt: "desc" },
+    take: 5,
+  });
+
+  // Combine and sort by createdAt desc
+  const allJobs = [...importJobs.map(j => ({ ...j, type: "Import" })), ...exportJobs.map(j => ({ ...j, type: "Export" }))]
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 10);
+
+  return { jobs: allJobs };
 };
 
 export const action = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
-  const color = ["Red", "Orange", "Yellow", "Green"][
-    Math.floor(Math.random() * 4)
-  ];
-  const response = await admin.graphql(
-    `#graphql
-      mutation populateProduct($product: ProductCreateInput!) {
-        productCreate(product: $product) {
-          product {
-            id
-            title
-            handle
-            status
-            variants(first: 10) {
-              edges {
-                node {
-                  id
-                  price
-                  barcode
-                  createdAt
-                }
-              }
-            }
-            demoInfo: metafield(namespace: "$app", key: "demo_info") {
-              jsonValue
-            }
-          }
-        }
-      }`,
-    {
-      variables: {
-        product: {
-          title: `${color} Snowboard`,
-          metafields: [
-            {
-              namespace: "$app",
-              key: "demo_info",
-              value: "Created by React Router Template",
-            },
-          ],
-        },
-      },
-    },
-  );
-  const responseJson = await response.json();
-  const product = responseJson.data.productCreate.product;
-  const variantId = product.variants.edges[0].node.id;
-  const variantResponse = await admin.graphql(
-    `#graphql
-    mutation shopifyReactRouterTemplateUpdateVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-        productVariants {
-          id
-          price
-          barcode
-          createdAt
-        }
-      }
-    }`,
-    {
-      variables: {
-        productId: product.id,
-        variants: [{ id: variantId, price: "100.00" }],
-      },
-    },
-  );
-  const variantResponseJson = await variantResponse.json();
-  const metaobjectResponse = await admin.graphql(
-    `#graphql
-    mutation shopifyReactRouterTemplateUpsertMetaobject($handle: MetaobjectHandleInput!, $metaobject: MetaobjectUpsertInput!) {
-      metaobjectUpsert(handle: $handle, metaobject: $metaobject) {
-        metaobject {
-          id
-          handle
-          title: field(key: "title") {
-            jsonValue
-          }
-          description: field(key: "description") {
-            jsonValue
-          }
-        }
-        userErrors {
-          field
-          message
-        }
-      }
-    }`,
-    {
-      variables: {
-        handle: {
-          type: "$app:example",
-          handle: "demo-entry",
-        },
-        metaobject: {
-          fields: [
-            { key: "title", value: "Demo Entry" },
-            {
-              key: "description",
-              value:
-                "This metaobject was created by the Shopify app template to demonstrate the metaobject API.",
-            },
-          ],
-        },
-      },
-    },
-  );
-  const metaobjectResponseJson = await metaobjectResponse.json();
+  const { session } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const actionType = formData.get("actionType");
 
-  return {
-    product: responseJson.data.productCreate.product,
-    variant: variantResponseJson.data.productVariantsBulkUpdate.productVariants,
-    metaobject: metaobjectResponseJson.data.metaobjectUpsert.metaobject,
-  };
+  if (actionType === "import") {
+    const job = await prisma.importJob.create({
+      data: {
+        shopId: session.shop,
+        fileUrl: "dummy-url", // Placeholder for actual file upload
+        status: "pending",
+        options: JSON.stringify({}),
+      },
+    });
+    return { success: true, job };
+  }
+
+  if (actionType === "export") {
+    const job = await prisma.exportJob.create({
+      data: {
+        shopId: session.shop,
+        status: "pending",
+        format: "xlsx",
+        filters: JSON.stringify({}),
+      },
+    });
+    return { success: true, job };
+  }
+
+  return { error: "Unknown action" };
 };
 
 export default function Index() {
+  const { jobs } = useLoaderData();
   const fetcher = useFetcher();
-  const shopify = useAppBridge();
-  const isLoading =
-    ["loading", "submitting"].includes(fetcher.state) &&
-    fetcher.formMethod === "POST";
+  const isPolling = jobs.some((j) => j.status === "pending" || j.status === "processing");
 
   useEffect(() => {
-    if (fetcher.data?.product?.id) {
-      shopify.toast.show("Product created");
+    let intervalId;
+    if (isPolling) {
+      intervalId = setInterval(() => {
+        fetcher.load("/app");
+      }, 2000); // Poll every 2 seconds if jobs are active
     }
-  }, [fetcher.data?.product?.id, shopify]);
-  const generateProduct = () => fetcher.submit({}, { method: "POST" });
+    return () => clearInterval(intervalId);
+  }, [isPolling, fetcher]);
+
+  const displayedJobs = fetcher.data?.jobs || jobs;
+  const isLoading = fetcher.state !== "idle";
+
+  const handleCreateJob = (type) => {
+    fetcher.submit({ actionType: type }, { method: "POST" });
+  };
+
+  const getStatusBadge = (status) => {
+    switch (status) {
+      case "completed":
+        return <Badge tone="success">Completed</Badge>;
+      case "processing":
+        return <Badge tone="attention">Processing</Badge>;
+      case "failed":
+        return <Badge tone="critical">Failed</Badge>;
+      case "pending":
+      default:
+        return <Badge>Pending</Badge>;
+    }
+  };
 
   return (
-    <s-page heading="Shopify app template">
-      <s-button slot="primary-action" onClick={generateProduct}>
-        Generate a product
-      </s-button>
+    <Page title="Orders Sync Dashboard">
+      <Layout>
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd">
+                Import & Export Orders
+              </Text>
+              <Text as="p" variant="bodyMd">
+                Manage your orders via spreadsheets (XLSX/CSV). Create, update, replace, merge, or delete orders using our bulk import tool, or export your existing orders.
+              </Text>
+              <InlineStack gap="300">
+                <Button onClick={() => handleCreateJob("import")} loading={isLoading && fetcher.formData?.get("actionType") === "import"} variant="primary">
+                  Import Orders
+                </Button>
+                <Button onClick={() => handleCreateJob("export")} loading={isLoading && fetcher.formData?.get("actionType") === "export"}>
+                  Export Orders
+                </Button>
+              </InlineStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
 
-      <s-section heading="Congrats on creating a new Shopify app 🎉">
-        <s-paragraph>
-          This embedded app template uses{" "}
-          <s-link
-            href="https://shopify.dev/docs/apps/tools/app-bridge"
-            target="_blank"
-          >
-            App Bridge
-          </s-link>{" "}
-          interface examples like an{" "}
-          <s-link href="/app/additional">additional page in the app nav</s-link>
-          , as well as an{" "}
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql"
-            target="_blank"
-          >
-            Admin GraphQL
-          </s-link>{" "}
-          mutation demo, to provide a starting point for app development.
-        </s-paragraph>
-      </s-section>
-      <s-section heading="Get started with products">
-        <s-paragraph>
-          Generate a product with GraphQL and get the JSON output for that
-          product. Learn more about the{" "}
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql/latest/mutations/productCreate"
-            target="_blank"
-          >
-            productCreate
-          </s-link>{" "}
-          mutation in our API references. Includes a product{" "}
-          <s-link
-            href="https://shopify.dev/docs/apps/build/custom-data/metafields"
-            target="_blank"
-          >
-            metafield
-          </s-link>{" "}
-          and{" "}
-          <s-link
-            href="https://shopify.dev/docs/apps/build/custom-data/metaobjects"
-            target="_blank"
-          >
-            metaobject
-          </s-link>
-          .
-        </s-paragraph>
-        <s-stack direction="inline" gap="base">
-          <s-button
-            onClick={generateProduct}
-            {...(isLoading ? { loading: true } : {})}
-          >
-            Generate a product
-          </s-button>
-          {fetcher.data?.product && (
-            <s-button
-              onClick={() => {
-                shopify.intents.invoke?.("edit:shopify/Product", {
-                  value: fetcher.data?.product?.id,
-                });
-              }}
-              target="_blank"
-              variant="tertiary"
-            >
-              Edit product
-            </s-button>
-          )}
-        </s-stack>
-        {fetcher.data?.product && (
-          <s-section heading="productCreate mutation">
-            <s-stack direction="block" gap="base">
-              <s-box
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <pre style={{ margin: 0 }}>
-                  <code>{JSON.stringify(fetcher.data.product, null, 2)}</code>
-                </pre>
-              </s-box>
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd">
+                Recent Jobs
+              </Text>
 
-              <s-heading>productVariantsBulkUpdate mutation</s-heading>
-              <s-box
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <pre style={{ margin: 0 }}>
-                  <code>{JSON.stringify(fetcher.data.variant, null, 2)}</code>
-                </pre>
-              </s-box>
+              {displayedJobs.length === 0 ? (
+                <EmptyState heading="No jobs yet" image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png">
+                  <p>Run your first import or export to see it here.</p>
+                </EmptyState>
+              ) : (
+                <BlockStack gap="300">
+                  {displayedJobs.map((job) => {
+                    const isImport = job.type === "Import";
+                    const progress = isImport
+                      ? job.totalRows > 0
+                        ? (job.processedRows / job.totalRows) * 100
+                        : 0
+                      : job.itemCount > 0
+                        ? 100 // Export doesn't have a total upfront usually, just item count
+                        : 0;
 
-              <s-heading>metaobjectUpsert mutation</s-heading>
-              <s-box
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <pre style={{ margin: 0 }}>
-                  <code>
-                    {JSON.stringify(fetcher.data.metaobject, null, 2)}
-                  </code>
-                </pre>
-              </s-box>
-            </s-stack>
-          </s-section>
-        )}
-      </s-section>
-
-      <s-section slot="aside" heading="App template specs">
-        <s-paragraph>
-          <s-text>Framework: </s-text>
-          <s-link href="https://reactrouter.com/" target="_blank">
-            React Router
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>Interface: </s-text>
-          <s-link
-            href="https://shopify.dev/docs/api/app-home/using-polaris-components"
-            target="_blank"
-          >
-            Polaris web components
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>API: </s-text>
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql"
-            target="_blank"
-          >
-            GraphQL
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>Custom data: </s-text>
-          <s-link
-            href="https://shopify.dev/docs/apps/build/custom-data"
-            target="_blank"
-          >
-            Metafields &amp; metaobjects
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>Database: </s-text>
-          <s-link href="https://www.prisma.io/" target="_blank">
-            Prisma
-          </s-link>
-        </s-paragraph>
-      </s-section>
-
-      <s-section slot="aside" heading="Next steps">
-        <s-unordered-list>
-          <s-list-item>
-            Build an{" "}
-            <s-link
-              href="https://shopify.dev/docs/apps/getting-started/build-app-example"
-              target="_blank"
-            >
-              example app
-            </s-link>
-          </s-list-item>
-          <s-list-item>
-            Explore Shopify&apos;s API with{" "}
-            <s-link
-              href="https://shopify.dev/docs/apps/tools/graphiql-admin-api"
-              target="_blank"
-            >
-              GraphiQL
-            </s-link>
-          </s-list-item>
-        </s-unordered-list>
-      </s-section>
-    </s-page>
+                    return (
+                      <Box key={job.id} paddingBlockEnd="200" borderBlockEndWidth="025" borderColor="border">
+                        <InlineStack align="space-between" blockAlign="center">
+                          <BlockStack gap="100">
+                            <Text as="h3" variant="headingSm">
+                              {job.type} Job
+                            </Text>
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {new Date(job.createdAt).toLocaleString()}
+                            </Text>
+                          </BlockStack>
+                          <InlineStack gap="300" blockAlign="center">
+                            {job.status === "processing" && (
+                              <Box minWidth="100px">
+                                <ProgressBar progress={progress} size="small" />
+                              </Box>
+                            )}
+                            {getStatusBadge(job.status)}
+                            <Button 
+                              url={isImport ? `/app/import/orders/summary/${job.id}` : `/app/export/orders/progress/${job.id}`} 
+                              variant="plain"
+                            >
+                              View Details
+                            </Button>
+                          </InlineStack>
+                        </InlineStack>
+                      </Box>
+                    );
+                  })}
+                </BlockStack>
+              )}
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+      </Layout>
+    </Page>
   );
 }
-
-export const headers = (headersArgs) => {
-  return boundary.headers(headersArgs);
-};

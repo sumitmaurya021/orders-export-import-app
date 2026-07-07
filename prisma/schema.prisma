@@ -32,3 +32,44 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+
+model ImportJob {
+  id            String    @id @default(uuid())
+  shopId        String
+  status        String    @default("pending") // pending/processing/completed/failed/partial
+  fileUrl       String
+  totalRows     Int       @default(0)
+  processedRows Int       @default(0)
+  errorCount    Int       @default(0)
+  warningCount  Int       @default(0)
+  startedAt     DateTime?
+  completedAt   DateTime?
+  options       String    // Stringified JSON
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model ExportJob {
+  id          String    @id @default(uuid())
+  shopId      String
+  status      String    @default("pending")
+  format      String    @default("xlsx") // xlsx/csv
+  fileUrl     String?
+  itemCount   Int       @default(0)
+  startedAt   DateTime?
+  completedAt DateTime?
+  filters     String    // Stringified JSON
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model JobLog {
+  id          String    @id @default(uuid())
+  jobId       String
+  jobType     String    // "import" | "export"
+  rowNumber   Int?
+  level       String    // "info" | "warning" | "error"
+  message     String
+  rawRowData  String?   // Stringified JSON
+  createdAt   DateTime  @default(now())
+}
